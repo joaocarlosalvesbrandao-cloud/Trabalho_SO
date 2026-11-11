@@ -99,28 +99,38 @@ int main() {
                 //mas como criamos os 
         */
 
-        int nbytes_w = write(pipe_c2t[1], msg, strlen(msg));
-        if(nbytes_w==-1){
-                perror("errro na escrita para o stdin tarifador");
-                close(f);
-                unlink(FICHEIRO_TMP);
-                exit(1);
-        }
-        //close(pipe_c2t[1]);
+        while (1)
+        {
+                printf("Coloque a origem, destino e peso: \n" );
+                if(fgets(msg, sizeof(msg), stdin)==NULL)//EOF
+                        break;
+                if(strcmp(msg, "sair\n")==0)
+                        break;
 
-        //read não acrescenta '\0'
-        int nbytes_r = read(pipe_t2c[0], buf, sizeof(buf)-1); //sizeof(buf)-1 para ter espaço para o \0
-        if(nbytes_r == -1){
-                perror("errro na leitura stdout tarifador");
-                close(f);
-                unlink(FICHEIRO_TMP);
-                exit(1);
+                if(write(pipe_c2t[1], msg, strlen(msg))==-1){
+                        perror("errro na escrita para o stdin tarifador");
+                        break;
+                }
+
+                int n = read(pipe_t2c[0], buf, sizeof(buf)-1); //sizeof(buf)-1 para ter espaço para o \0
+
+                if(n == -1){
+                        perror("errro na leitura stdout tarifador");
+                        break;
+                }
+                if(n == 0){
+                        printf("O tarifador terminou\n");
+                        break;
+                }
+                buf[n]='\0';
+                printf("Recebi: %s\n", buf);
+
+
         }
-        buf[nbytes_r]='\0';
-        printf("Recebi do buffer: %s\n", buf);
-        //close(pipe_t2c[0]);
+        close(pipe_c2t[1]);
+        close(pipe_t2c[0]);
+        
         wait(&retproc);
-
         close(f);
         unlink(FICHEIRO_TMP);
 
