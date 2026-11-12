@@ -107,6 +107,17 @@ int main() {
                 if(strcmp(msg, "sair\n")==0)
                         break;
 
+                char origem[50];
+                char destino[50];
+                float peso;
+
+                // Se conseguir ler os 3 elementos corretamente, o formato está correto
+                if (sscanf(msg, "%49s %49s %f", origem, destino, &peso) != 3) { // O sscanf tenta ler a msg com este formato
+                        printf("Erro: Formato inválido!\n");
+                        printf("Uso correto: <origem> <destino> <peso>(ex: Lisboa Porto 15.5)\n\n");
+                        continue; // Ignora o resto do código e volta ao início do ciclo
+                }
+
                 if(write(pipe_c2t[1], msg, strlen(msg))==-1){
                         perror("errro na escrita para o stdin tarifador");
                         break;
