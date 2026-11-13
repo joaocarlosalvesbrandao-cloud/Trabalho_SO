@@ -7,12 +7,23 @@
 
 #include "central.h"
 
+typedef struct {
+        int recebidos;
+        int atribuidos;
+        int concluidos;
+        int expirados;
+        int perdidos;
+        float valor_total;
+} Stats;
+
 int main() {
 
         char msg[100];
         char buf[100];
         int max_estafetas; // Variável para guardar o numero de estafetas
         int prazo_aceita;
+
+        Stats estatisticas = {0,0,0,0,0,0.0}; // Inicializar a estrutura tudo a 0
 
         setbuf(stdout, NULL);
 
@@ -101,42 +112,79 @@ int main() {
 
         while (1)
         {
-                printf("Coloque a origem, destino e peso: \n" );
+                printf("Comando > \n" );
                 if(fgets(msg, sizeof(msg), stdin)==NULL)//EOF
                         break;
-                if(strcmp(msg, "sair\n")==0)
-                        break;
 
-                char origem[50];
-                char destino[50];
-                float peso;
 
-                // Se conseguir ler os 3 elementos corretamente, o formato está correto
-                if (sscanf(msg, "%49s %49s %f", origem, destino, &peso) != 3) { // O sscanf tenta ler a msg com este formato
-                        printf("Erro: Formato inválido!\n");
-                        printf("Uso correto: <origem> <destino> <peso>(ex: Lisboa Porto 15.5)\n\n");
-                        continue; // Ignora o resto do código e volta ao início do ciclo
-                }
+                char comando[50];
+        
+                sscanf(msg, "%49s", comando); // Lẽ a primeira palavra para identificar qual o comando
 
-                if(write(pipe_c2t[1], msg, strlen(msg))==-1){
-                        perror("errro na escrita para o stdin tarifador");
+                if(strcmp(comando, "encerra")==0) {
+                        printf("A encerrar a central\n");
                         break;
                 }
-
-                int n = read(pipe_t2c[0], buf, sizeof(buf)-1); //sizeof(buf)-1 para ter espaço para o \0
-
-                if(n == -1){
-                        perror("errro na leitura stdout tarifador");
-                        break;
+                else if (strcmp(comando, "stats")==0) {
+                        printf("Estatísticas:\n");
+                        printf("Encomendas recebidas: %d\n", estatisticas.recebidos);
+                        printf("Encomendas atribuídas: %d\n", estatisticas.atribuidos);
+                        printf("Encomendas concluídas: %d\n", estatisticas.concluidos);
+                        printf("Encomendas expiradas: %d\n", estatisticas.expirados);
+                        printf("Encomendas perdidas: %d\n", estatisticas.perdidos);
+                        printf("Valor total das encomendas: %.2f\n", estatisticas.valor_total);
                 }
-                if(n == 0){
-                        printf("O tarifador terminou\n");
-                        break;
+
+
+                // Comandos ainda não existentes 
+                else if (strcmp(comando, "estafetas") == 0 ||
+                        strcmp(comando, "pedidos") == 0 ||
+                        strcmp(comando, "prazo") == 0) {
+                                printf("O comando '%s' ainda não existe\n", comando);
                 }
-                buf[n]='\0';
-                printf("Recebi: %s\n", buf);
+                        
+                else if (strcmp(comando, "pedido") == 0){
+                        char origem[50];
+                        char destino[50];
+                        float peso;
 
+                        // Se conseguir ler os 3 elementos corretamente, o formato está correto
+                        if ((sscanf(msg, "%*s %49s %49s %f", origem, destino, &peso) != 3) || peso <= 0) { // Entra no if se o sscanf ler algo diferente do que está a espera, ou se o peso <= 0
+                                // %*s -> serve para ignorar a primeira palavra
+                                printf("Erro: Formato inválido!\n");
+                                printf("Uso correto: <origem> <destino> <peso>(ex: Lisboa Porto 15.5)\n\n");
+                                continue; // Ignora o resto do código e volta ao início do ciclo
+                        }
+                        
+                        estatisticas.recebidos++; // Incrementa o numero do pedido
 
+                        char msg_tarifador[150];
+                        // Isto serve para criar uma string nova com o que o sscanf leu, ou seja, apenas a origem, destino e peso
+                        snprintf(msg_tarifador, sizeof(msg_tarifador), "%s %s %.2f\n", origem, destino, peso); // FUnciona como o printf, só que guarda o valor numa variavel
+
+                        if(write(pipe_c2t[1], msg_tarifador, strlen(msg_tarifador))==-1){
+                                perror("errro na escrita para o stdin tarifador");
+                                break;
+                        }
+
+                        int n = read(pipe_t2c[0], buf, sizeof(buf)-1); //sizeof(buf)-1 para ter espaço para o \0
+
+                        if(n == -1){
+                                perror("errro na leitura stdout tarifador");
+                                break;
+                        }
+                        if(n == 0){
+                                printf("O tarifador terminou\n");
+                                break;
+                        }
+                        buf[n]='\0';
+                        printf("Recebi: %s\n", buf);
+
+                }
+
+                else {
+                        printf("Comando desconhecido: %s\n", comando);
+                }
         }
         close(pipe_c2t[1]);
         close(pipe_t2c[0]);
@@ -144,8 +192,6 @@ int main() {
         wait(&retproc);
         close(f);
         unlink(FICHEIRO_TMP);
-
-
 
         return 0;
 }
