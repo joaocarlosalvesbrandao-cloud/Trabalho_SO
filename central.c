@@ -4,8 +4,12 @@
 #include <unistd.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <signal.h>
+#include <errno.h>
 
 #include "central.h"
+
+volatile sig_atomic_t terminar=0;
 
 typedef struct {
         int recebidos;
@@ -16,12 +20,29 @@ typedef struct {
         float valor_total;
 } Stats;
 
+void sair(int signum){
+        terminar = 1;
+}
+
 int main() {
 
         char msg[100];
         char buf[100];
         int max_estafetas; // Variável para guardar o numero de estafetas
         int prazo_aceita;
+
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags= 0;
+
+        sa.sa_handler = sair;
+        sigaction(SIGINT, &sa, NULL);
+
+        sa.sa_handler = SIG_IGN;
+        sigaction(SIGPIPE, &sa, NULL);
+
+
 
         Stats estatisticas = {0,0,0,0,0,0.0}; // Inicializar a estrutura tudo a 0
 
@@ -38,6 +59,10 @@ int main() {
                 exit(1);
         }
         close(f);
+
+        
+
+
 
     
 
@@ -60,17 +85,17 @@ int main() {
                 prazo_aceita = PRAZOACEITA;
         }
 
-        printf("\n%d\n%d\n",max_estafetas, prazo_aceita);
-
         int pipe_c2t[2]; // Criar array para guardar a entrada/saida do tunel, [0] saída, [1] entrada
         int pipe_t2c[2]; // ------- Igual ao de cima -------
 
         if (pipe(pipe_c2t) == -1) { // pipe(.....), cria o pipe (central -> tarifador)
                 perror("Erro ao criar o pipe para o tarifador");
+                unlink(FICHEIRO_TMP);
                 exit(1);
         }
         if (pipe(pipe_t2c)== -1) { // pipe(....), cria o pipe (tarifador -> central)
                 perror("Erro ao criar o pipe de rececao do tarifador");
+                unlink(FICHEIRO_TMP);
                 exit(1);
         }
 
@@ -78,10 +103,15 @@ int main() {
         pid_t pid = fork();
         if(pid == -1){
                 perror("erro no fork");
+                unlink(FICHEIRO_TMP);
                 exit(1);
         }
         if(pid ==0){
                 //filho
+                sa.sa_handler = SIG_IGN;
+                sigaction(SIGINT, &sa, NULL);
+                sa.sa_handler = SIG_DFL;
+                sigaction(SIGPIPE, &sa, NULL);
                 //substituição Stdin
                 close(0);
                 dup(pipe_c2t[0]);
@@ -110,14 +140,18 @@ int main() {
                 //mas como criamos os 
         */
 
-        while (1)
+        while (!terminar)
         {
                 printf("Comando > \n" );
-                if(fgets(msg, sizeof(msg), stdin)==NULL)//EOF
+                if(fgets(msg, sizeof(msg), stdin)==NULL){//EOF
+                        if(!terminar)
+                                printf("EOF, a encerrar\n");
                         break;
+                }
+                
 
 
-                char comando[50];
+                char comando[50]="";
         
                 sscanf(msg, "%49s", comando); // Lẽ a primeira palavra para identificar qual o comando
 
@@ -170,7 +204,8 @@ int main() {
                         int n = read(pipe_t2c[0], buf, sizeof(buf)-1); //sizeof(buf)-1 para ter espaço para o \0
 
                         if(n == -1){
-                                perror("errro na leitura stdout tarifador");
+                                if(errno !=EINTR)
+                                        perror("errro na leitura stdout tarifador");
                                 break;
                         }
                         if(n == 0){
@@ -181,6 +216,9 @@ int main() {
                         printf("Recebi: %s\n", buf);
 
                 }
+                if(terminar){
+                        printf("\nSIGINT recebido, a encerrar a central\n");
+                }
 
                 else {
                         printf("Comando desconhecido: %s\n", comando);
@@ -189,8 +227,9 @@ int main() {
         close(pipe_c2t[1]);
         close(pipe_t2c[0]);
         
-        wait(&retproc);
-        close(f);
+        //waitpid(pid,&retproc,0);
+        while(waitpid(pid, &retproc, 0)== -1 && errno == EINTR);
+        //close(f);
         unlink(FICHEIRO_TMP);
 
         return 0;
