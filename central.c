@@ -16,7 +16,7 @@ typedef struct {
         float valor_total;
 } Stats;
 
-int main() {
+int main(int argc, char *argv[]) { // Vai receber estes dois argumentos para o "-m" ou "-p"
 
         char msg[100];
         char buf[100];
@@ -39,7 +39,6 @@ int main() {
         }
         close(f);
 
-    
 
         char *estafetas_temp = getenv("MAXESTAFETAS"); // "Capturar" o valor da variávle com o nome "MAXESTAFETAS" que está em memória
         char *prazo_temp = getenv("PRAZOACEITA"); // ----------- Igual ao de cima ------------
@@ -60,7 +59,24 @@ int main() {
                 prazo_aceita = PRAZOACEITA;
         }
 
-        printf("\n%d\n%d\n",max_estafetas, prazo_aceita);
+        int opt;
+        while ((opt = getopt(argc, argv, "m:p:")) != -1) { // getopt vai ler o que foi inserido no comando, neste caso ao iniciar o program "./central -p .... -m ....""
+                                                           // ele vai ler e ver se existe essas letras (m, p), os ":" a separar é para ler logo o que está a seguir dessa letra
+                                                           // guardando isso na variavel optarg (variável default e automática da biblioteca "unistd.h")
+                                                           // A função getopt retorna a propria letra que leu se correr bem, quando acaba de ter tudo, devolve -1
+                if (opt == 'm'){
+                        max_estafetas = atoi(optarg); // Converte o valor que leu em string e guarda na respetiva variavel
+                        if (max_estafetas == 0)
+                                max_estafetas = MAXESTAFETAS;
+                }
+
+                if (opt == 'p') {
+                        prazo_aceita = atoi(optarg);
+                        if (prazo_aceita == 0)
+                                prazo_aceita = PRAZOACEITA;
+                }
+        }
+
 
         int pipe_c2t[2]; // Criar array para guardar a entrada/saida do tunel, [0] saída, [1] entrada
         int pipe_t2c[2]; // ------- Igual ao de cima -------
@@ -80,6 +96,20 @@ int main() {
                 perror("erro no fork");
                 exit(1);
         }
+
+        char *bindir_temp = getenv("BINDIR"); // Guarda o valor da variavel ambiente "BINDIR", caso nao encontre nada, retorna NULL
+        char caminho_tarifador[200];
+
+        if (bindir_temp != NULL) {
+                // Se a variável existir, junta o caminho com "/tarifador" (ex: /home/joao/tarifador)
+                snprintf(caminho_tarifador, sizeof(caminho_tarifador), "%s/tarifador", bindir_temp);
+        } 
+        
+        else {
+                // Se não existir, assume que está na mesma pasta do central
+                snprintf(caminho_tarifador, sizeof(caminho_tarifador), "./tarifador");
+        }
+        
         if(pid ==0){
                 //filho
                 //substituição Stdin
@@ -94,8 +124,7 @@ int main() {
                 close(pipe_t2c[0]);
                 close(pipe_t2c[1]);
 
-
-                execl("./tarifador", "tarifador", NULL);
+                execl(caminho_tarifador, "tarifador", NULL);
                 perror("erro no exec do tarifador");
                 exit(1);
         }
@@ -112,20 +141,21 @@ int main() {
 
         while (1)
         {
-                printf("Comando > \n" );
+        
+                printf("Comando > " );
                 if(fgets(msg, sizeof(msg), stdin)==NULL)//EOF
                         break;
 
-
                 char comando[50];
-        
+                
+                //Le a partir de um array, lê msg -> comando
                 sscanf(msg, "%49s", comando); // Lẽ a primeira palavra para identificar qual o comando
 
-                if(strcmp(comando, "encerra")==0) {
+                if(strcasecmp(comando, "encerra")==0) {
                         printf("A encerrar a central\n");
                         break;
                 }
-                else if (strcmp(comando, "stats")==0) {
+                else if (strcasecmp(comando, "stats")==0) {
                         printf("Estatísticas:\n");
                         printf("Encomendas recebidas: %d\n", estatisticas.recebidos);
                         printf("Encomendas atribuídas: %d\n", estatisticas.atribuidos);
@@ -137,28 +167,35 @@ int main() {
 
 
                 // Comandos ainda não existentes 
-                else if (strcmp(comando, "estafetas") == 0 ||
-                        strcmp(comando, "pedidos") == 0 ||
-                        strcmp(comando, "prazo") == 0) {
+                else if (strcasecmp(comando, "estafetas") == 0 ||
+                        strcasecmp(comando, "pedidos") == 0 ||
+                        strcasecmp(comando, "prazo") == 0) {
                                 printf("O comando '%s' ainda não existe\n", comando);
                 }
-                        
-                else if (strcmp(comando, "pedido") == 0){
-                        char origem[50];
-                        char destino[50];
+
+                else if (strcasecmp(comando, "pedido") == 0){
+                        char origem[15];
+                        char destino[15];
                         float peso;
 
                         // Se conseguir ler os 3 elementos corretamente, o formato está correto
-                        if ((sscanf(msg, "%*s %49s %49s %f", origem, destino, &peso) != 3) || peso <= 0) { // Entra no if se o sscanf ler algo diferente do que está a espera, ou se o peso <= 0
+                        if ((sscanf(msg, "%*s %49s %49s %f", origem, destino, &peso) != 3) || peso <= 0 || strlen(origem) > 15 || strlen(destino) > 15) { // Entra no if se o sscanf ler algo diferente do que está a espera
                                 // %*s -> serve para ignorar a primeira palavra
-                                printf("Erro: Formato inválido!\n");
-                                printf("Uso correto: <origem> <destino> <peso>(ex: Lisboa Porto 15.5)\n\n");
-                                continue; // Ignora o resto do código e volta ao início do ciclo
+                                
+                                if (strlen(origem) > 15 || strlen(destino) > 15) { 
+                                        printf("\nInsira uma origem/destino com até 15 caracteres\n");
+                                        continue;
+                                }
+                                else {
+                                        printf("Erro: Formato inválido!\n");
+                                        printf("Uso correto: <origem> <destino> <peso>(ex: Lisboa Porto 15.5)\n\n");
+                                        continue; // Ignora o resto do código e volta ao início do ciclo
+                                }
                         }
                         
                         estatisticas.recebidos++; // Incrementa o numero do pedido
 
-                        char msg_tarifador[150];
+                        char msg_tarifador[50];
                         // Isto serve para criar uma string nova com o que o sscanf leu, ou seja, apenas a origem, destino e peso
                         snprintf(msg_tarifador, sizeof(msg_tarifador), "%s %s %.2f\n", origem, destino, peso); // FUnciona como o printf, só que guarda o valor numa variavel
 
