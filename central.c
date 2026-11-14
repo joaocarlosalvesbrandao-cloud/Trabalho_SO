@@ -4,17 +4,17 @@
 #include <unistd.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <signal.h>  
+#include <errno.h>
 
 #include "central.h"
 
-typedef struct {
-        int recebidos;
-        int atribuidos;
-        int concluidos;
-        int expirados;
-        int perdidos;
-        float valor_total;
-} Stats;
+
+volatile sig_atomic_t terminar = 0;
+
+void trata_sinal(int sig, siginfo_t *info, void *contexto){ //para que serve o 3 argumendo?
+        terminar = 1;
+}
 
 int main(int argc, char *argv[]) { // Vai receber estes dois argumentos para o "-m" ou "-p"
 
@@ -27,12 +27,21 @@ int main(int argc, char *argv[]) { // Vai receber estes dois argumentos para o "
 
         setbuf(stdout, NULL);
 
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sa_sigaction=trata_sinal;
+        sa.sa_flags=SA_SIGINFO;
+        sigaction(SIGINT, &sa, NULL);
+        sigaction(SIGTERM, &sa, NULL); //para kill pid
+
+        signal(SIGPIPE, SIG_IGN); //ignorar sinais do pipe
+
         if (access(FICHEIRO_TMP, F_OK) == 0){
 		printf("A central já está em execucao\n");
 		exit(0);
 	}
 
-        int f = open(FICHEIRO_TMP, O_CREAT | O_EXCL | O_RDWR, 0666);
+        int f = open(FICHEIRO_TMP, O_CREAT | O_RDWR, 0666);
         if(f == -1){
                 printf("Erro na criação do ficheiro temporário\n");
                 exit(1);
@@ -48,7 +57,7 @@ int main(int argc, char *argv[]) { // Vai receber estes dois argumentos para o "
         }
 
         else {
-                max_estafetas = MAXESTAFETAS; // Senão (estafetas_temp == NULL), usa o valor definido por default, guardado no central.h
+                max_estafetas = DEF_MAXESTAFETAS; // Senão (estafetas_temp == NULL), usa o valor definido por default, guardado no central.h
         }
 
         if (prazo_temp != NULL) {
@@ -56,7 +65,7 @@ int main(int argc, char *argv[]) { // Vai receber estes dois argumentos para o "
         }
 
         else {
-                prazo_aceita = PRAZOACEITA;
+                prazo_aceita = DEF_PRAZOACEITA;
         }
 
         int opt;
@@ -67,13 +76,13 @@ int main(int argc, char *argv[]) { // Vai receber estes dois argumentos para o "
                 if (opt == 'm'){
                         max_estafetas = atoi(optarg); // Converte o valor que leu em string e guarda na respetiva variavel
                         if (max_estafetas == 0)
-                                max_estafetas = MAXESTAFETAS;
+                                max_estafetas = DEF_MAXESTAFETAS;
                 }
 
                 if (opt == 'p') {
                         prazo_aceita = atoi(optarg);
                         if (prazo_aceita == 0)
-                                prazo_aceita = PRAZOACEITA;
+                                prazo_aceita = DEF_PRAZOACEITA;
                 }
         }
 
@@ -83,10 +92,14 @@ int main(int argc, char *argv[]) { // Vai receber estes dois argumentos para o "
 
         if (pipe(pipe_c2t) == -1) { // pipe(.....), cria o pipe (central -> tarifador)
                 perror("Erro ao criar o pipe para o tarifador");
+                unlink(FICHEIRO_TMP);
                 exit(1);
         }
         if (pipe(pipe_t2c)== -1) { // pipe(....), cria o pipe (tarifador -> central)
                 perror("Erro ao criar o pipe de rececao do tarifador");
+                close(pipe_c2t[0]);
+                close(pipe_c2t[1]);
+                unlink(FICHEIRO_TMP);
                 exit(1);
         }
 
@@ -94,6 +107,12 @@ int main(int argc, char *argv[]) { // Vai receber estes dois argumentos para o "
         pid_t pid = fork();
         if(pid == -1){
                 perror("erro no fork");
+                close(pipe_c2t[0]);
+                close(pipe_c2t[1]);
+
+                close(pipe_t2c[0]);
+                close(pipe_t2c[1]);
+                unlink(FICHEIRO_TMP);
                 exit(1);
         }
 
@@ -112,6 +131,10 @@ int main(int argc, char *argv[]) { // Vai receber estes dois argumentos para o "
         
         if(pid ==0){
                 //filho
+                signal(SIGINT, SIG_IGN); //Ignorar o ctr c no tarifador
+
+                signal(SIGPIPE, SIG_DFL);
+
                 //substituição Stdin
                 close(0);
                 dup(pipe_c2t[0]);
@@ -139,7 +162,7 @@ int main(int argc, char *argv[]) { // Vai receber estes dois argumentos para o "
                 //mas como criamos os 
         */
 
-        while (1)
+        while (!terminar)
         {
         
                 printf("Comando > " );
@@ -149,7 +172,8 @@ int main(int argc, char *argv[]) { // Vai receber estes dois argumentos para o "
                 char comando[50];
                 
                 //Le a partir de um array, lê msg -> comando
-                sscanf(msg, "%49s", comando); // Lẽ a primeira palavra para identificar qual o comando
+                if (sscanf(msg, "%49s", comando) !=1) // Lẽ a primeira palavra para identificar qual o comando
+                        continue;
 
                 if(strcasecmp(comando, "encerra")==0) {
                         printf("A encerrar a central\n");
@@ -162,7 +186,7 @@ int main(int argc, char *argv[]) { // Vai receber estes dois argumentos para o "
                         printf("Encomendas concluídas: %d\n", estatisticas.concluidos);
                         printf("Encomendas expiradas: %d\n", estatisticas.expirados);
                         printf("Encomendas perdidas: %d\n", estatisticas.perdidos);
-                        printf("Valor total das encomendas: %.2f\n", estatisticas.valor_total);
+                        printf("Valor total das encomendas: %.2f\n", estatisticas.valor_concluidos);
                 }
 
 
@@ -179,7 +203,7 @@ int main(int argc, char *argv[]) { // Vai receber estes dois argumentos para o "
                         float peso;
 
                         // Se conseguir ler os 3 elementos corretamente, o formato está correto
-                        if ((sscanf(msg, "%*s %49s %49s %f", origem, destino, &peso) != 3) || peso <= 0 || strlen(origem) > 15 || strlen(destino) > 15) { // Entra no if se o sscanf ler algo diferente do que está a espera
+                        if ((sscanf(msg, "%*s %16s %16s %f", origem, destino, &peso) != 3) || peso <= 0 || strlen(origem) > 15 || strlen(destino) > 15) { // Entra no if se o sscanf ler algo diferente do que está a espera
                                 // %*s -> serve para ignorar a primeira palavra
                                 
                                 if (strlen(origem) > 15 || strlen(destino) > 15) { 
@@ -220,14 +244,26 @@ int main(int argc, char *argv[]) { // Vai receber estes dois argumentos para o "
                 }
 
                 else {
-                        printf("Comando desconhecido: %s\n", comando);
+                        printf("\nComando desconhecido\n");
                 }
         }
+        if(terminar)
+                printf("\nSinal recebido: a encerrar a central\n");
+
         close(pipe_c2t[1]);
+        kill(pid, SIGTERM);
+
+        while (waitpid(pid, &retproc, 0) == -1 && errno == EINTR)
+                ;
+        
+        if (WIFEXITED(retproc))
+                printf("Tarifador terminou com o código %d\n", WEXITSTATUS(retproc));
+        else if (WIFSIGNALED(retproc))
+                printf("Tarifador terminado pelo sinal %d\n", WTERMSIG(retproc));
+
         close(pipe_t2c[0]);
         
-        wait(&retproc);
-        close(f);
+        
         unlink(FICHEIRO_TMP);
 
         return 0;
